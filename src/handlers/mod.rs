@@ -73,6 +73,11 @@ use crate::protocols::ext_workspace::{self, ExtWorkspaceHandler, ExtWorkspaceMan
 use crate::protocols::foreign_toplevel::{
     self, ForeignToplevelHandler, ForeignToplevelManagerState,
 };
+use smithay::reexports::wayland_protocols::wp::color_management::v1::server::wp_image_description_info_v1::WpImageDescriptionInfoV1;
+
+use crate::protocols::color_management::{
+    send_image_description_info, ColorManagementHandler, ColorManagementState, ImageDescription,
+};
 use crate::protocols::gamma_control::{GammaControlHandler, GammaControlManagerState};
 use crate::protocols::mutter_x11_interop::MutterX11InteropHandler;
 use crate::protocols::output_management::{OutputManagementHandler, OutputManagementManagerState};
@@ -83,6 +88,11 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerMotionEvent,
 };
 use crate::utils::{output_size, send_scale_transform};
+use crate::{
+    delegate_color_management, delegate_ext_workspace, delegate_foreign_toplevel,
+    delegate_gamma_control, delegate_mutter_x11_interop, delegate_output_management,
+    delegate_screencopy, delegate_virtual_pointer,
+};
 
 pub const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -758,6 +768,30 @@ impl GammaControlHandler for State {
         }
     }
 }
+
+impl ColorManagementHandler for State {
+    fn color_management_state(&mut self) -> &mut ColorManagementState {
+        &mut self.niri.color_management_state
+    }
+
+    fn image_description_changed(&mut self, _surface: &WlSurface) {
+        // The stored description is picked up by the TTY render loop on the next frame, which
+        // reconciles HDR signalling. A redraw is already scheduled by the surface commit.
+    }
+
+    fn schedule_image_description_info(
+        &mut self,
+        info: WpImageDescriptionInfoV1,
+        desc: ImageDescription,
+    ) {
+        // Deferred to an idle so the destructor `done` event is sent after the creating request
+        // dispatch returns (see the trait method docs).
+        self.niri.event_loop.insert_idle(move |_state| {
+            send_image_description_info(&info, &desc);
+        });
+    }
+}
+delegate_color_management!(State);
 
 struct UrgentOnlyMarker;
 
