@@ -99,54 +99,6 @@ const HDR_COLOR_FORMATS: [Fourcc; 8] = [
     Fourcc::Abgr8888,
 ];
 
-/// Probe whether the render GPU can actually *bind* a 10-bit scanout buffer as a render target.
-///
-/// `dmabuf_render_formats()` (the source of the compositor's render formats) advertises 2101010
-/// on some drivers, and the connector can scan it out, so `DrmCompositor::new()` succeeds — but
-/// importing the buffer as a color-renderable EGL image can still fail (it imports as an external
-/// texture, or the resulting framebuffer is incomplete). That only shows up at render time as a
-/// per-frame `Failed to bind Framebuffer`, after the compositor exists, so the creation-time
-/// 10-bit → 8-bit fallback never sees it. Doing one real bind up front — exactly what
-/// `DrmCompositor::render_frame` does internally — lets us drop to 8-bit cleanly instead of
-/// freezing the display. Returns `true` if at least one 10-bit format binds.
-fn can_bind_10bit(
-    renderer: &mut GlesRenderer,
-    allocator: &mut GbmAllocator<DrmDeviceFd>,
-    render_formats: &FormatSet,
-) -> bool {
-    // The 10-bit formats HDR_COLOR_FORMATS would offer for scanout.
-    const TEN_BIT: [Fourcc; 4] = [
-        Fourcc::Xrgb2101010,
-        Fourcc::Xbgr2101010,
-        Fourcc::Argb2101010,
-        Fourcc::Abgr2101010,
-    ];
-
-    for fourcc in TEN_BIT {
-        let modifiers: Vec<Modifier> = render_formats
-            .iter()
-            .filter(|format| format.code == fourcc)
-            .map(|format| format.modifier)
-            .collect();
-        if modifiers.is_empty() {
-            continue;
-        }
-
-        let Ok(buffer) = allocator.create_buffer(16, 16, fourcc, &modifiers) else {
-            continue;
-        };
-        let Ok(mut dmabuf) = buffer.export() else {
-            continue;
-        };
-        // A real bind: EGL image import + framebuffer completeness check. On error the renderer
-        // unbinds itself, so this leaves no lingering GL state for the subsequent real frames.
-        if renderer.bind(&mut dmabuf).is_ok() {
-            return true;
-        }
-    }
-
-    false
-}
 
 pub struct Tty {
     config: Rc<RefCell<Config>>,
@@ -1595,26 +1547,97 @@ impl Tty {
         let mut color_formats: &[Fourcc] = if self.config.borrow().debug.disable_10bit_output {
             &SUPPORTED_COLOR_FORMATS[..]
         } else {
-            let mut want_10bit = config.hdr.is_some() && hdr_supported && !force_8bit;
+            let mut using_10bit_formats = config.hdr.is_some() && hdr_supported && !force_8bit;
+            let mut hdr_color_formats = Vec::new();
 
-            // Some GPUs advertise 2101010 in `dmabuf_render_formats()` (and can scan it out, so
-            // `DrmCompositor::new()` succeeds) yet cannot import it as a color-renderable EGL image —
-            // the failure only surfaces per-frame at render time as "Failed to bind Framebuffer",
-            // after the compositor is already created, so the creation-time fallback below never
-            // catches it. Probe an actual render-target bind up front and drop to 8-bit if it fails.
-            // HDR signalling still works on an 8-bit framebuffer, just with banding.
-            if want_10bit
-                && !can_bind_10bit(renderer.as_gles_renderer(), &mut device.allocator, &render_formats)
-            {
-                warn!(
-                    connector = connector_name,
-                    "GPU can scan out but not render into 10-bit; using an 8-bit HDR framebuffer"
-                );
-                want_10bit = false;
+            if using_10bit_formats {
+                // Do a throwaway compositor + render_frame probe for each 10-bit format separately.
+                // Some drivers can render into AR30/AB30 but not XR30/XB30; treating 10-bit as a
+                // boolean capability would either pick a broken format or fall back too far to 8-bit.
+                for format in HDR_TEN_BIT_COLOR_FORMATS {
+                    let surface = device
+                        .drm
+                        .create_surface(crtc, mode, &[connector.handle()])?;
+
+                    let mut compositor: GbmDrmCompositor = match DrmCompositor::new(
+                        OutputModeSource::Auto(output.downgrade()),
+                        surface,
+                        None,
+                        device.allocator.clone(),
+                        GbmFramebufferExporter::new(device.gbm.clone(), device.render_node.into()),
+                        std::iter::once(format),
+                        render_formats.clone(),
+                        device.drm.cursor_size(),
+                        Some(device.gbm.clone()),
+                    ) {
+                        Ok(compositor) => compositor,
+                        Err(err) => {
+                            warn!(
+                                connector = connector_name,
+                                ?format,
+                                "10-bit format is not usable for DRM compositor creation: {err:?}"
+                            );
+                            continue;
+                        }
+                    };
+
+                    let render_ok = match self.gpu_manager.renderer(
+                        &self.primary_render_node,
+                        &render_node,
+                        compositor.format(),
+                    ) {
+                        Ok(mut renderer) => {
+                            let no_elements: [SolidColorRenderElement; 0] = [];
+                            match compositor.render_frame(
+                                &mut renderer,
+                                &no_elements,
+                                [0.; 4],
+                                FrameFlags::empty(),
+                            ) {
+                                Ok(_) => true,
+                                Err(err) => {
+                                    warn!(
+                                        connector = connector_name,
+                                        ?format,
+                                        "10-bit format is not renderable: {err:?}"
+                                    );
+                                    false
+                                }
+                            }
+                        }
+                        // Couldn't build a renderer to probe with; don't block startup — keep the
+                        // format and let the real render path try, as the previous probe did.
+                        Err(err) => {
+                            warn!(
+                                connector = connector_name,
+                                ?format,
+                                "could not probe 10-bit format renderability: {err:?}"
+                            );
+                            true
+                        }
+                    };
+
+                    compositor.reset_buffers();
+
+                    if render_ok {
+                        debug!(connector = connector_name, ?format, "keeping renderable 10-bit format");
+                        hdr_color_formats.push(format);
+                    }
+                }
+
+                if hdr_color_formats.is_empty() {
+                    warn!(
+                        connector = connector_name,
+                        "GPU can scan out but not render into any 10-bit format; using an 8-bit HDR framebuffer"
+                    );
+                    using_10bit_formats = false;
+                } else {
+                    hdr_color_formats.extend(SDR_COLOR_FORMATS);
+                }
             }
 
-            if want_10bit {
-                &HDR_COLOR_FORMATS
+            if using_10bit_formats {
+                &hdr_color_formats
             } else {
                 &SUPPORTED_COLOR_FORMATS_10BIT[..]
             }
@@ -1642,10 +1665,11 @@ impl Tty {
 
         // If 10-bit formats didn't work out, fall back to plain 8-bit before trying anything
         // else. HDR signalling still works on an 8-bit framebuffer, just with banding.
-        if res.is_err() && std::ptr::eq(color_formats, &HDR_COLOR_FORMATS as &[_]) {
+        if res.is_err() && using_10bit_formats {
             let err = res.as_ref().err().unwrap();
             warn!("error creating DRM compositor with 10-bit formats, retrying 8-bit: {err:?}");
-            color_formats = &SUPPORTED_COLOR_FORMATS[..];
+            color_formats = &SDR_COLOR_FORMATS;
+            using_10bit_formats = false;
 
             // DrmCompositor::new() consumed the surface...
             let surface = device
