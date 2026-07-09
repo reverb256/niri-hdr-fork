@@ -31,6 +31,7 @@ use smithay::backend::drm::{
 use smithay::backend::egl::context::ContextPriority;
 use smithay::backend::egl::{EGLDevice, EGLDisplay};
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
+use smithay::backend::renderer::element::solid::SolidColorRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
 use smithay::backend::renderer::multigpu::{GpuManager, MultiFrame, MultiRenderer};
@@ -67,8 +68,8 @@ use super::{IpcOutputMap, OutputHdrCaps, RenderResult};
 use crate::backend::OutputId;
 use crate::frame_clock::FrameClock;
 use smithay::wayland::color::management::{
-    Chromaticities, ImageDescription, Primaries as CmPrimaries, PrimariesOption as CmPrimariesOption,
-    TransferFunction as CmTransferFunction,
+    Chromaticities, ImageDescription, Primaries as CmPrimaries,
+    PrimariesOption as CmPrimariesOption, TransferFunction as CmTransferFunction,
 };
 
 use crate::render_helpers::blend::{self, set_frame_blend, DEFAULT_REFERENCE_LUMINANCE};
@@ -98,6 +99,13 @@ const HDR_COLOR_FORMATS: [Fourcc; 8] = [
     Fourcc::Xbgr8888,
     Fourcc::Argb8888,
     Fourcc::Abgr8888,
+];
+
+const HDR_TEN_BIT_COLOR_FORMATS: [Fourcc; 4] = [
+    Fourcc::Xrgb2101010,
+    Fourcc::Xbgr2101010,
+    Fourcc::Argb2101010,
+    Fourcc::Abgr2101010,
 ];
 
 
@@ -2172,6 +2180,7 @@ impl Tty {
                     mastering_primaries: None,
                     luminances: None,
                     windows_scrgb: false,
+                    windows_bt2100: false,
                 });
                 ConnectorColorState {
                     colorspace: Colorspace::Bt2020Rgb,
@@ -3647,9 +3656,10 @@ fn build_hdr_metadata(desc: &ImageDescription, edid: &EdidHdrInfo) -> HdrOutputM
     // ST 2086 mastering primaries: the client's target color volume, which may exceed the
     // container primaries (extended target volume). Without one, the target defaults to the
     // container primaries per the color-management protocol.
-    let chroma = desc
-        .mastering_primaries
-        .unwrap_or_else(|| Chromaticities::from_option(desc.primaries).unwrap_or(Chromaticities::from_named(CmPrimaries::Srgb)));
+    let chroma = desc.mastering_primaries.unwrap_or_else(|| {
+        Chromaticities::from_option(desc.primaries)
+            .unwrap_or(Chromaticities::from_named(CmPrimaries::Srgb))
+    });
     // Protocol wire units (xy * 1e6) -> CTA-861.3 units (xy * 50000).
     let coord = |(x, y): (i32, i32)| CtaCoordinate::from_xy(f64::from(x) / 1e6, f64::from(y) / 1e6);
 
@@ -3872,6 +3882,7 @@ mod tests {
             mastering_primaries: None,
             luminances: None,
             windows_scrgb: false,
+            windows_bt2100: false,
         };
         let edid = EdidHdrInfo {
             pq: true,
@@ -3939,6 +3950,7 @@ mod tests {
             mastering_primaries: None,
             luminances: None,
             windows_scrgb: false,
+            windows_bt2100: false,
         };
 
         // Without mastering primaries the infoframe carries the container primaries
@@ -3958,7 +3970,10 @@ mod tests {
         };
         let meta = build_hdr_metadata(&desc, &EdidHdrInfo::default());
         // Display P3 red is (0.680, 0.320): x = 0.680 * 50000 = 34000.
-        assert_eq!(meta.display_primaries[0], CtaCoordinate { x: 34000, y: 16000 });
+        assert_eq!(
+            meta.display_primaries[0],
+            CtaCoordinate { x: 34000, y: 16000 }
+        );
         assert_eq!(meta.white_point, CtaCoordinate::D65_WHITE);
     }
 
