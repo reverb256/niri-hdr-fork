@@ -1131,7 +1131,7 @@ impl Tty {
                                 let tty_state: &TtyOutputState =
                                     output.user_data().get().unwrap();
                                 if tty_state.node == node && tty_state.crtc == crtc {
-                                    output.user_data().insert(caps);
+                                    output.user_data().set(|| caps);
                                 }
                             }
                         }
@@ -1531,7 +1531,7 @@ impl Tty {
             .user_data()
             .insert_if_missing(|| TtyOutputState { node, crtc });
         output.user_data().insert_if_missing(|| output_name.clone());
-        output.user_data().insert(OutputHdrCaps {
+        output.user_data().set(|| OutputHdrCaps {
             supported: hdr_supported,
             max_luminance: edid_hdr.max_luminance,
             min_luminance: edid_hdr.min_luminance,
