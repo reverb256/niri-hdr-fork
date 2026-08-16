@@ -49,7 +49,6 @@ use smithay::reexports::drm::control::{
     self, connector, crtc, plane, property, AtomicCommitFlags, Device, Mode as DrmMode, ModeFlags,
     ModeTypeFlags, PlaneType, ResourceHandle,
 };
-use smithay::reexports::drm::surface::Surface as DrmSurface;
 use smithay::reexports::gbm::Modifier;
 use smithay::reexports::input::Libinput;
 use smithay::reexports::rustix::fs::OFlags;
@@ -475,47 +474,6 @@ impl EdidHdrInfo {
     }
 }
 
-/// Probes the connector's color/HDR capabilities from the live DRM surface and EDID.
-///
-/// Re-probed on every DrmScanEvent::Changed so that a sink which gains HDR
-/// capability after connect (e.g. a TV completing its HDR handshake and flipping
-/// its EDID PQ bit) is reflected in the output's OutputHdrCaps. Previously the
-/// caps were computed once at connect with insert_if_missing, so an early
-/// edid_pq=false froze the output as SDR-capable for the whole session.
-fn probe_hdr_caps(
-    drm: &Device,
-    surface: &DrmSurface,
-    connector: connector::Handle,
-) -> OutputHdrCaps {
-    let max_bpc_range = surface
-        .max_bpc_range(connector)
-        .map_err(|err| warn!("error querying max bpc range: {err:?}"))
-        .ok()
-        .flatten();
-    let supports_bt2020 = surface
-        .supported_colorspaces(connector)
-        .map_err(|err| warn!("error querying supported colorspaces: {err:?}"))
-        .is_ok_and(|cs| cs.contains(&Colorspace::Bt2020Rgb));
-    let supports_hdr_metadata = surface.hdr_metadata_supported(connector).unwrap_or(false);
-    let edid_hdr = get_edid_info(drm, connector)
-        .map(|info| EdidHdrInfo::from_edid(&info))
-        .unwrap_or_default();
-    let supported = supports_bt2020 && supports_hdr_metadata && edid_hdr.pq;
-    debug!(
-        supports_bt2020,
-        supports_hdr_metadata,
-        edid_pq = edid_hdr.pq,
-        edid_bt2020_rgb = edid_hdr.bt2020_rgb,
-        ?max_bpc_range,
-        "connector color capabilities"
-    );
-    OutputHdrCaps {
-        supported,
-        max_luminance: edid_hdr.max_luminance,
-        min_luminance: edid_hdr.min_luminance,
-        max_frame_avg_luminance: edid_hdr.max_frame_avg_luminance,
-    }
-}
 
 struct GammaProps {
     crtc: crtc::Handle,
@@ -1144,8 +1102,31 @@ impl Tty {
                             .drm
                             .create_surface(crtc, mode, &[connector.handle()])
                         {
-                            let caps =
-                                probe_hdr_caps(&device.drm, &surface, connector.handle());
+                            let max_bpc_range = surface
+                                .max_bpc_range(connector.handle())
+                                .map_err(|err| warn!("error querying max bpc range: {err:?}"))
+                                .ok()
+                                .flatten();
+                            let supports_bt2020 = surface
+                                .supported_colorspaces(connector.handle())
+                                .map_err(|err| {
+                                    warn!("error querying supported colorspaces: {err:?}")
+                                })
+                                .is_ok_and(|cs| cs.contains(&Colorspace::Bt2020Rgb));
+                            let supports_hdr_metadata = surface
+                                .hdr_metadata_supported(connector.handle())
+                                .unwrap_or(false);
+                            let edid_hdr = get_edid_info(&device.drm, connector.handle())
+                                .map(|info| EdidHdrInfo::from_edid(&info))
+                                .unwrap_or_default();
+                            let caps = OutputHdrCaps {
+                                supported: supports_bt2020
+                                    && supports_hdr_metadata
+                                    && edid_hdr.pq,
+                                max_luminance: edid_hdr.max_luminance,
+                                min_luminance: edid_hdr.min_luminance,
+                                max_frame_avg_luminance: edid_hdr.max_frame_avg_luminance,
+                            };
                             for output in niri.global_space.outputs() {
                                 let tty_state: &TtyOutputState =
                                     output.user_data().get().unwrap();
