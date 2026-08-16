@@ -2288,7 +2288,7 @@ impl Niri {
         &self,
         output: &Output,
     ) -> Option<(niri_config::output::Hdr, OutputHdrCaps)> {
-        let caps = *output.user_data().get::<OutputHdrCaps>()?;
+        let caps = *output.user_data().get::<Mutex<OutputHdrCaps>>()?.lock().unwrap();
         if !caps.supported {
             return None;
         }
