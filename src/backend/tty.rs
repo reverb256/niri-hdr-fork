@@ -1131,7 +1131,12 @@ impl Tty {
                                 let tty_state: &TtyOutputState =
                                     output.user_data().get().unwrap();
                                 if tty_state.node == node && tty_state.crtc == crtc {
-                                    output.user_data().set(|| caps);
+                                    output
+                                        .user_data()
+                                        .get_or_insert(|| Mutex::new(caps))
+                                        .lock()
+                                        .unwrap()
+                                        .clone_from(&caps);
                                 }
                             }
                         }
@@ -1531,12 +1536,14 @@ impl Tty {
             .user_data()
             .insert_if_missing(|| TtyOutputState { node, crtc });
         output.user_data().insert_if_missing(|| output_name.clone());
-        output.user_data().set(|| OutputHdrCaps {
-            supported: hdr_supported,
-            max_luminance: edid_hdr.max_luminance,
-            min_luminance: edid_hdr.min_luminance,
-            max_frame_avg_luminance: edid_hdr.max_frame_avg_luminance,
-        });
+        output
+            .user_data()
+            .insert_if_missing(|| Mutex::new(OutputHdrCaps {
+                supported: hdr_supported,
+                max_luminance: edid_hdr.max_luminance,
+                min_luminance: edid_hdr.min_luminance,
+                max_frame_avg_luminance: edid_hdr.max_frame_avg_luminance,
+            }));
         if let Some(x) = orientation {
             output.user_data().insert_if_missing(|| PanelOrientation(x));
         }
