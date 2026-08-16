@@ -3,6 +3,7 @@
 //! `use_system_lib`, a panic in a server dispatch handler unwinds across the C libwayland frame and
 //! aborts the process — so any handler panic shows up here as a failing test.
 
+use std::sync::Mutex;
 use niri_config::output::Hdr;
 use niri_config::{Config, Output};
 use smithay::reexports::wayland_protocols::wp::color_management::v1::client::wp_color_manager_v1::{
@@ -111,12 +112,12 @@ fn fixture_with_hdr_mode_on() -> Fixture {
     // The headless backend doesn't probe HDR capabilities; inject them like the TTY backend would.
     f.niri_output(1)
         .user_data()
-        .insert_if_missing(|| OutputHdrCaps {
+        .insert_if_missing(|| Mutex::new(OutputHdrCaps {
             supported: true,
             max_luminance: 800,
             min_luminance: 100,
             max_frame_avg_luminance: 600,
-        });
+        }));
     f
 }
 
