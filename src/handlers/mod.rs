@@ -88,14 +88,10 @@ use crate::protocols::virtual_pointer::{
     VirtualPointerMotionEvent,
 };
 use crate::utils::{output_size, send_scale_transform};
-use smithay::delegate_color_management;
 
-use crate::{
-    delegate_ext_workspace, delegate_foreign_toplevel, delegate_gamma_control,
-    delegate_mutter_x11_interop, delegate_output_management, delegate_screencopy,
-    delegate_virtual_pointer,
-};
-
+// The blanket delegate_dispatch2!(State) lives in src/niri.rs (upstream) and
+// covers every Dispatch2/GlobalDispatch2 user-data type, including the
+// color-management protocol from the smithay HDR fork.
 pub const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl SeatHandler for State {
@@ -801,7 +797,7 @@ impl ColorManagementHandler for State {
         });
     }
 }
-delegate_color_management!(State);
+
 
 struct UrgentOnlyMarker;
 

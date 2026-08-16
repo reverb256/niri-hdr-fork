@@ -101,6 +101,14 @@ const HDR_COLOR_FORMATS: [Fourcc; 8] = [
     Fourcc::Abgr8888,
 ];
 
+/// SDR scanout formats used as the 8-bit fallback when 10-bit can't render.
+const SDR_COLOR_FORMATS: [Fourcc; 4] = [
+    Fourcc::Xrgb8888,
+    Fourcc::Xbgr8888,
+    Fourcc::Argb8888,
+    Fourcc::Abgr8888,
+];
+
 const HDR_TEN_BIT_COLOR_FORMATS: [Fourcc; 4] = [
     Fourcc::Xrgb2101010,
     Fourcc::Xbgr2101010,
@@ -1599,11 +1607,12 @@ impl Tty {
         // driver that hangs on 10-bit scanout (set the var -> boots fine) from one that hangs on the
         // HDR infoframe commit itself (still hangs). Remove once HDR on nvidia is understood.
         let force_8bit = std::env::var_os("NIRI_HDR_FORCE_8BIT").is_some();
+        let mut using_10bit_formats = config.hdr.is_some() && hdr_supported && !force_8bit;
+        let mut hdr_color_formats = Vec::new();
+
         let mut color_formats: &[Fourcc] = if self.config.borrow().debug.disable_10bit_output {
             &SUPPORTED_COLOR_FORMATS[..]
         } else {
-            let mut using_10bit_formats = config.hdr.is_some() && hdr_supported && !force_8bit;
-            let mut hdr_color_formats = Vec::new();
 
             if using_10bit_formats {
                 // Do a throwaway compositor + render_frame probe for each 10-bit format separately.
