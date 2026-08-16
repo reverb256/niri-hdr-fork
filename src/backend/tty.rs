@@ -1467,8 +1467,28 @@ impl Tty {
         // Probe the connector's color/HDR capabilities: HDR signalling needs the Colorspace
         // (with BT2020_RGB) and HDR_OUTPUT_METADATA properties from the driver, plus a sink
         // that accepts the PQ EOTF per its EDID.
-        let caps = probe_hdr_caps(&device.drm, &surface, connector.handle());
-        let hdr_supported = caps.supported;
+        let max_bpc_range = surface
+            .max_bpc_range(connector.handle())
+            .map_err(|err| warn!("error querying max bpc range: {err:?}"))
+            .ok()
+            .flatten();
+        let supports_bt2020 = surface
+            .supported_colorspaces(connector.handle())
+            .map_err(|err| warn!("error querying supported colorspaces: {err:?}"))
+            .is_ok_and(|cs| cs.contains(&Colorspace::Bt2020Rgb));
+        let supports_hdr_metadata = surface.hdr_metadata_supported(connector.handle()).unwrap_or(false);
+        let edid_hdr = get_edid_info(&device.drm, connector.handle())
+            .map(|info| EdidHdrInfo::from_edid(&info))
+            .unwrap_or_default();
+        let hdr_supported = supports_bt2020 && supports_hdr_metadata && edid_hdr.pq;
+        debug!(
+            supports_bt2020,
+            supports_hdr_metadata,
+            edid_pq = edid_hdr.pq,
+            edid_bt2020_rgb = edid_hdr.bt2020_rgb,
+            ?max_bpc_range,
+            "connector color capabilities"
+        );
         if config.hdr.is_some() && !hdr_supported {
             warn!(
                 "output {connector_name}: hdr is enabled in the config, but the driver or \
@@ -1531,9 +1551,9 @@ impl Tty {
         output.user_data().insert_if_missing(|| output_name.clone());
         output.user_data().insert(OutputHdrCaps {
             supported: hdr_supported,
-            max_luminance: caps.max_luminance,
-            min_luminance: caps.min_luminance,
-            max_frame_avg_luminance: caps.max_frame_avg_luminance,
+            max_luminance: edid_hdr.max_luminance,
+            min_luminance: edid_hdr.min_luminance,
+            max_frame_avg_luminance: edid_hdr.max_frame_avg_luminance,
         });
         if let Some(x) = orientation {
             output.user_data().insert_if_missing(|| PanelOrientation(x));
