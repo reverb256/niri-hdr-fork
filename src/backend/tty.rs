@@ -3718,14 +3718,25 @@ fn get_edid_info(
 /// the sink's EDID desired-content values > conservative ~500 nit placeholders.
 fn build_hdr_metadata(desc: &ImageDescription, edid: &EdidHdrInfo) -> HdrOutputMetadata {
     let to_u16 = |v: u32| v.min(u16::MAX as u32) as u16;
-    // Clamps a client-provided value to the sink's EDID capability, when the EDID has one.
-    let clamp_to = |v: u16, edid_cap: u16| if edid_cap > 0 { v.min(edid_cap) } else { v };
+    // A configured `content_luminance` override may intentionally exceed the conservative
+    // EDID-reported peak, so we never clamp *down* the blend-space luminances we computed:
+    // take the maximum of the two (raise the advertised peak when the user asked for more).
+
+    // The user-overridable HDR peak (from `content_luminance`, or the blend description's
+    // computed max, falling back to the EDID peak) — prefer desc.luminances.1 over the EDID so
+    // a configured override is never clamped back down to the TV's pessimistic ~200 nits.
+    let desc_max = desc
+        .luminances
+        .map(|(_, max, _)| to_u16(max))
+        .filter(|&max| max > 0)
+        .or((edid.max_luminance > 0).then_some(edid.max_luminance))
+        .unwrap_or(500);
 
     let max_luminance = desc
         .mastering_luminance
-        .map(|(_, max)| clamp_to(to_u16(max), edid.max_luminance))
-        .or((edid.max_luminance > 0).then_some(edid.max_luminance))
-        .unwrap_or(500);
+        .map(|(_, max)| to_u16(max))
+        .unwrap_or(desc_max)
+        .max(desc_max);
     let min_luminance = desc
         .mastering_luminance
         .map(|(min, _)| to_u16(min).max(edid.min_luminance))
@@ -3733,12 +3744,12 @@ fn build_hdr_metadata(desc: &ImageDescription, edid: &EdidHdrInfo) -> HdrOutputM
         .unwrap_or(50);
     let max_cll = desc
         .max_cll
-        .map(|v| clamp_to(to_u16(v), edid.max_luminance))
+        .map(|v| to_u16(v).max(edid.max_luminance))
         .or((edid.max_luminance > 0).then_some(edid.max_luminance))
         .unwrap_or(500);
     let max_fall = desc
         .max_fall
-        .map(|v| clamp_to(to_u16(v), edid.max_frame_avg_luminance))
+        .map(|v| to_u16(v).max(edid.max_frame_avg_luminance))
         .or((edid.max_frame_avg_luminance > 0).then_some(edid.max_frame_avg_luminance))
         .unwrap_or(500);
 

@@ -158,6 +158,13 @@ pub struct Hdr {
     /// in HDR mode. Defaults to 203 cd/m² (the BT.2408 reference white) when unset.
     #[knuffel(child, unwrap(argument))]
     pub reference_luminance: Option<FloatOrInt<0, 10000>>,
+    /// Override for the HDR content peak luminance, in cd/m² (nits), used in the
+    /// HDR_OUTPUT_METADATA / image description. By default this comes from the sink's EDID
+    /// (Content Max Luminance); many TVs report a conservative ~200 nits even when they can
+    /// display much brighter. Set e.g. 600 to advertise a higher peak. Only applies when
+    /// `mode = "on"` (or auto and HDR is engaged) and the output is HDR-capable.
+    #[knuffel(child, unwrap(argument))]
+    pub content_luminance: Option<FloatOrInt<0, 10000>>,
 }
 
 /// When HDR engages on an `hdr`-enabled output.

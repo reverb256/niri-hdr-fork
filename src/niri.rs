@@ -2309,11 +2309,18 @@ impl Niri {
     ) -> ImageDescription {
         // Same placeholder as build_hdr_metadata() in the TTY backend uses for sinks whose
         // EDID doesn't provide luminance data.
-        let max_luminance = if caps.max_luminance > 0 {
-            u32::from(caps.max_luminance)
-        } else {
-            500
-        };
+        // `content_luminance` (if configured) overrides the EDID-reported peak — many TVs
+        // report a conservative value (e.g. ~200 nits) even when capable of much brighter.
+        let max_luminance = hdr
+            .content_luminance
+            .map(|v| v.0 as u32)
+            .unwrap_or_else(|| {
+                if caps.max_luminance > 0 {
+                    u32::from(caps.max_luminance)
+                } else {
+                    500
+                }
+            });
         let reference_luminance = hdr.reference_luminance.map(|v| v.0).unwrap_or(203.) as u32;
         ImageDescription {
             transfer: CmTransferFunction::St2084Pq,
@@ -2321,7 +2328,7 @@ impl Niri {
                 named: Some(CmPrimaries::Bt2020),
                 values: None,
             },
-            max_cll: (caps.max_luminance > 0).then(|| u32::from(caps.max_luminance)),
+            max_cll: Some(max_luminance),
             max_fall: (caps.max_frame_avg_luminance > 0)
                 .then(|| u32::from(caps.max_frame_avg_luminance)),
             mastering_luminance: None,
