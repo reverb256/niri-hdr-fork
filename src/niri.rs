@@ -835,6 +835,10 @@ impl State {
         foreign_toplevel::refresh(self);
         ext_workspace::refresh(self);
 
+        // Flush GL destruction queues scheduled by surface/buffer destroys
+        // since the last refresh (see `Tty::schedule_renderer_cleanup`).
+        self.niri.backend.run_scheduled_renderer_cleanup();
+
         #[cfg(feature = "xdp-gnome-screencast")]
         self.niri.refresh_mapped_cast_outputs();
         // Should happen before refresh_window_rules(), but after anything that can start or stop

@@ -140,6 +140,10 @@ pub struct Tty {
     // Whether the debug tinting is enabled.
     debug_tint: bool,
     ipc_outputs: Arc<Mutex<IpcOutputMap>>,
+    // A surface or buffer was destroyed, so the main-thread renderers' GL
+    // destruction queues hold textures that should be flushed on the next
+    // refresh (see `run_scheduled_renderer_cleanup`).
+    pending_renderer_cleanup: bool,
 }
 
 pub type TtyRenderer<'render> = MultiRenderer<
@@ -593,7 +597,32 @@ impl Tty {
             update_output_config_on_resume: false,
             debug_tint: false,
             ipc_outputs: Arc::new(Mutex::new(HashMap::new())),
+            pending_renderer_cleanup: false,
         })
+    }
+
+    /// Request a drain of the main-thread renderers' destruction queues on the
+    /// next refresh.
+    ///
+    /// Destroying a surface or buffer drops the textures these renderers
+    /// imported from it, which only *queues* the GL deletions on their
+    /// contexts; the queues are flushed by rendering or an explicit drain.
+    /// Those renderers may not draw again for a long time, so until the drain
+    /// runs the dead client's buffers stay pinned in VRAM.
+    pub fn schedule_renderer_cleanup(&mut self) {
+        self.pending_renderer_cleanup = true;
+    }
+
+    /// Drain the GL destruction queues of the main-thread renderers, if
+    /// scheduled.
+    pub fn run_scheduled_renderer_cleanup(&mut self) {
+        if !self.pending_renderer_cleanup {
+            return;
+        }
+        self.pending_renderer_cleanup = false;
+        if let Err(err) = self.gpu_manager.cleanup_texture_cache() {
+            warn!("Failed to drain main-thread renderer cleanup queue: {err:?}");
+        }
     }
 
     pub fn init(&mut self, niri: &mut Niri) {
