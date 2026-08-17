@@ -620,8 +620,13 @@ impl Tty {
             return;
         }
         self.pending_renderer_cleanup = false;
-        if let Err(err) = self.gpu_manager.cleanup_texture_cache() {
-            warn!("Failed to drain main-thread renderer cleanup queue: {err:?}");
+        let Ok(devices) = self.gpu_manager.devices_mut() else {
+            return;
+        };
+        for device in devices {
+            if let Err(err) = device.renderer_mut().cleanup_texture_cache() {
+                warn!("Failed to drain main-thread renderer cleanup queue: {err:?}");
+            }
         }
     }
 
