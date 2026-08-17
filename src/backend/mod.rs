@@ -98,6 +98,15 @@ impl Backend {
         }
     }
 
+    /// Schedule a drain of the main-thread renderers' GL destruction queues on
+    /// the next refresh. No-op on backends without a GPU manager.
+    pub fn schedule_renderer_cleanup(&mut self) {
+        match self {
+            Backend::Tty(tty) => tty.schedule_renderer_cleanup(),
+            Backend::Winit(_) | Backend::Headless(_) => {}
+        }
+    }
+
     pub fn with_primary_renderer<T>(
         &mut self,
         f: impl FnOnce(&mut GlesRenderer) -> T,
