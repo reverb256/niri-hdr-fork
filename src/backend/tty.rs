@@ -34,7 +34,7 @@ use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface}
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
-use smithay::backend::renderer::multigpu::{GpuManager, MultiFrame, MultiRenderer};
+use smithay::backend::renderer::multigpu::{ApiDevice, GpuManager, MultiFrame, MultiRenderer};
 use smithay::backend::renderer::{Bind, DebugFlags, ImportDma, ImportEgl, RendererSuper};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};

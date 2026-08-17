@@ -515,7 +515,7 @@ impl CompositorHandler for State {
         // A surface died. The textures this renderer imported from it are only
         // queued for GL deletion; flush them on the next refresh so the dead
         // client's buffers don't stay pinned in VRAM until some future draw.
-        self.niri.backend.schedule_renderer_cleanup();
+        self.backend.schedule_renderer_cleanup();
     }
 }
 
@@ -523,7 +523,7 @@ impl BufferHandler for State {
     fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {
         // Same as surface destroy: the GL destruction queue holds the textures
         // for this buffer until flushed, so schedule a drain.
-        self.niri.backend.schedule_renderer_cleanup();
+        self.backend.schedule_renderer_cleanup();
     }
 }
 
